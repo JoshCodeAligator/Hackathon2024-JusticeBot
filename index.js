@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const twilio = require('twilio');
 const admin = require('firebase-admin');
+const dialogflow = require('@google-cloud/dialogflow');
 
 // Initialize Firebase with the Firebase Admin SDK key
 const serviceAccount = require('./firebase-admin-key.json'); // Adjust path if necessary
@@ -14,6 +15,27 @@ const db = admin.firestore();
 
 // Initialize Twilio
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+// Initialize Dialogflow using the existing Firebase credentials
+const sessionClient = new dialogflow.SessionsClient(); // Uses Firebase credentials
+
+//Helper to detect initent
+async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
+  const sessionPath = sessionClient.projectAgentSessionPath(projectId, sessionId);
+
+  const request = {
+    session: sessionPath,
+    queryInput: {
+      text: {
+        text: query,
+        languageCode,
+      },
+    },
+  };
+
+  const responses = await sessionClient.detectIntent(request);
+  return responses[0].queryResult;
+}
 
 // Express setup
 const app = express();
