@@ -14,10 +14,9 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.send(`
     <h1>Welcome to JustRights API!</h1>
-    <p>This service is here to support you with clear information about your rights and protections. 
-    We provide instant assistance for users seeking justice and rights information, especially within the Alberta Human Rights framework. 
-    Simply send a message, and our chatbot will help you understand your rights or direct you to resources for further action. 
-    Your requests are securely processed, and frequent questions are stored to ensure prompt responses in the future.</p>
+    <p>We’re here to help you understand your rights and protections, especially under Alberta’s Human Rights framework. Just send a message, and our chatbot will provide the information you need or direct you to helpful resources. Your privacy is important to us, and we track common questions to respond faster in the future.</p>
+    <p>How can I assist you today?</p>
+
   `);
 });
 
@@ -63,7 +62,7 @@ if (!projectId) {
 const sendIntroMessage = (res) => {
   return res.status(200).send(
     `<Response>
-      <Message>Welcome to JustRights! This service provides instant guidance on your rights and protections, especially within Alberta’s Human Rights framework. Just text us your question, and we'll help you with relevant info.</Message>
+      <Message>Welcome to JustRights! If you're feeling uncertain or need quick answers, we're here to help. Just let us know what you're facing, and we’ll provide clear, real-time information about your rights based on your location.</Message>
     </Response>`
   );
 };
@@ -77,7 +76,7 @@ app.post('/sms', async (req, res) => {
   const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
 
   // Check if the user is asking for "about bot" or "reset"
-  if (Body.toLowerCase().includes('about bot') || Body.toLowerCase().includes('reset')) {
+  if (Body.toLowerCase().includes('about bot')) {
     return sendIntroMessage(res); // Send the intro message again
   }
 
@@ -109,16 +108,18 @@ app.post('/sms', async (req, res) => {
       };
 
       const responses = await dialogflowClient.detectIntent(request);
-      const intentResponse = responses[0].queryResult.fulfillmentText ||
-        "I'm here to help! Could you clarify what you're looking for?";
+      const queryResult = responses[0].queryResult;
+      const intentResponse = queryResult.fulfillmentText || "I'm here to help! Could you clarify what you're looking for?";
 
-      // Save the essential information to Firestore
-      await responsesCollection.add({
-        phoneNumber: From,
-        userInput: Body,
-        intent: responses[0].queryResult.intent.displayName,
-        response: intentResponse
-      });
+      // Only store if an intent is retrieved
+      if (queryResult.intent) {
+        await responsesCollection.add({
+          phoneNumber: From,
+          userInput: Body,
+          intent: queryResult.intent.displayName,
+          response: intentResponse
+        });
+      }
 
       // Send response from Dialogflow to the user
       return res.status(200).send(
