@@ -59,6 +59,15 @@ if (!projectId) {
   process.exit(1);
 }
 
+// Send Introductory Message
+const sendIntroMessage = (res) => {
+  return res.status(200).send(
+    `<Response>
+      <Message>Welcome to JustRights! This service provides instant guidance on your rights and protections, especially within Alberta’s Human Rights framework. Just text us your question, and we'll help you with relevant info.</Message>
+    </Response>`
+  );
+};
+
 // SMS route to handle incoming messages
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body; // Get the SMS text and sender's phone number
@@ -66,6 +75,11 @@ app.post('/sms', async (req, res) => {
   // Ensure 'From' is valid and use it as session ID
   const sessionId = From || 'default-session-id';
   const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
+
+  // Check if the user is asking for "about bot" or "reset"
+  if (Body.toLowerCase().includes('about bot') || Body.toLowerCase().includes('reset')) {
+    return sendIntroMessage(res); // Send the intro message again
+  }
 
   // Check Firestore to see if we have previously handled this query
   try {
@@ -98,13 +112,12 @@ app.post('/sms', async (req, res) => {
       const intentResponse = responses[0].queryResult.fulfillmentText ||
         "I'm here to help! Could you clarify what you're looking for?";
 
-      // Save new query to Firestore
+      // Save the essential information to Firestore
       await responsesCollection.add({
         phoneNumber: From,
         userInput: Body,
         intent: responses[0].queryResult.intent.displayName,
-        response: intentResponse,
-        timestamp: firebaseAdmin.firestore.FieldValue.serverTimestamp()
+        response: intentResponse
       });
 
       // Send response from Dialogflow to the user
