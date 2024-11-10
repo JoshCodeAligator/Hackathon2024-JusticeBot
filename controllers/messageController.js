@@ -1,12 +1,9 @@
-const db = require('../config/firebase');
+// controllers/messageController.js
+const Message = require('../models/Message');
 const twilioClient = require('../config/twilio');
 const detectIntent = require('../config/dialogflow');
-const { searchDocuments } = require('../services/documentSearch');
 
 async function handleIncomingSMS(req, res) {
-  // Log to verify request payload
-  console.log(req.body);
-
   const { Body, From } = req.body;
 
   if (!Body || !From) {
@@ -14,35 +11,23 @@ async function handleIncomingSMS(req, res) {
     return res.status(400).json({ error: 'Invalid message: Body and From are required' });
   }
 
-  const userRef = db.collection('users').doc(From);
-
+  // Log the message to MongoDB
   try {
-    await userRef.set({ phoneNumber: From }, { merge: true });
-    await userRef.update({
-      chatHistory: admin.firestore.FieldValue.arrayUnion({
-        text: Body,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      }),
+    const message = new Message({
+      phoneNumber: From,
+      text: Body,
     });
-    console.log('Message logged to Firestore');
+    await message.save();
+    console.log('Message logged to MongoDB');
   } catch (error) {
-    console.error('Error logging message to Firestore:', error);
+    console.error('Error logging message to MongoDB:', error);
     return res.status(500).send('Error logging message');
   }
 
-  let responseMessage;
+  // Process the message with Dialogflow and send a response
   try {
     const dialogflowResponse = await detectIntent(process.env.DIALOGFLOW_PROJECT_ID, From, Body);
-    const { fulfillmentText, isAlbertaDocumentSearch } = dialogflowResponse;
-
-    if (isAlbertaDocumentSearch) {
-      const searchResults = searchDocuments(Body);
-      responseMessage = searchResults.length
-        ? searchResults.map(result => `Found in ${result.fileName}:\n${result.snippet}`).join('\n\n')
-        : "Sorry, I couldn't find any information related to that in Alberta government documents.";
-    } else {
-      responseMessage = fulfillmentText || "I'm not sure how to respond to that.";
-    }
+    const responseMessage = dialogflowResponse.fulfillmentText || "I'm not sure how to respond to that.";
 
     await twilioClient.messages.create({
       body: responseMessage,

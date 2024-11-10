@@ -1,9 +1,9 @@
+// config/dialogflow.js
 const { SessionsClient } = require('@google-cloud/dialogflow');
-const path = require('path');
+const { searchDocuments } = require('../services/documentSearch');
 
-// Initialize Dialogflow SessionsClient
 const sessionClient = new SessionsClient({
-  keyFilename: path.join(__dirname, '../firebase-admin-key.json'), // Path to Firebase credentials
+  keyFilename: './config/firebase-admin-key.json', // Ensure the key file exists for Dialogflow
 });
 
 async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
@@ -19,25 +19,24 @@ async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
     },
   };
 
-  try {
-    // Send request to Dialogflow and get responses
-    const responses = await sessionClient.detectIntent(request);
-    const result = responses[0].queryResult;
+  const responses = await sessionClient.detectIntent(request);
+  const result = responses[0].queryResult;
 
-    // Check if the intent is related to Alberta document search
-    const isAlbertaDocumentSearch = result.intent?.displayName === 'Alberta Document Search';
-
-    // Return query result with an additional field to indicate if document search is needed
-    return {
-      fulfillmentText: result.fulfillmentText,
-      intent: result.intent.displayName,
-      isAlbertaDocumentSearch, // Flag to indicate Alberta-specific search intent
-      queryText: result.queryText,
-    };
-  } catch (error) {
-    console.error('Dialogflow request error:', error);
-    throw error;
+  // If Dialogflow recognizes an intent to fetch from documents
+  if (result.intent && result.intent.displayName === 'DocumentSearchIntent') {
+    const documentResults = searchDocuments(result.queryText);
+    if (documentResults.length > 0) {
+      return {
+        fulfillmentText: `Here is what I found in the Alberta documents:\n${documentResults
+          .map(doc => `${doc.fileName}: ${doc.textSnippet}`)
+          .join('\n')}`,
+      };
+    } else {
+      return { fulfillmentText: "I'm sorry, I couldn't find any relevant information in the Alberta documents." };
+    }
   }
+
+  return result;
 }
 
 module.exports = detectIntent;
