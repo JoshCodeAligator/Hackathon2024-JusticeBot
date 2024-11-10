@@ -1,4 +1,3 @@
-require('dotenv').config(); // Load environment variables from .env file
 const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
@@ -13,7 +12,13 @@ app.use(express.urlencoded({ extended: true }));
 
 // Route to handle GET requests to the root
 app.get('/', (req, res) => {
-  res.send('Welcome to JustRights API! Your backend is running.');
+  res.send(`
+    <h1>Welcome to JustRights API!</h1>
+    <p>This service is here to support you with clear information about your rights and protections. 
+    We provide instant assistance for users seeking justice and rights information, especially within the Alberta Human Rights framework. 
+    Simply send a message, and our chatbot will help you understand your rights or direct you to resources for further action. 
+    Your requests are securely processed, and frequent questions are stored to ensure prompt responses in the future.</p>
+  `);
 });
 
 // Twilio credentials
@@ -32,19 +37,22 @@ const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // Firebase Admin SDK initialization
 try {
-  // Initialize Firebase with default application credentials (uses GOOGLE_APPLICATION_CREDENTIALS)
   firebaseAdmin.initializeApp({
     credential: firebaseAdmin.credential.applicationDefault(),
   });
   console.log('Firebase Admin SDK initialized successfully.');
 } catch (error) {
   console.error('Error initializing Firebase Admin SDK:', error);
-  process.exit(1); // Exit the app if Firebase initialization fails
+  process.exit(1);
 }
 
-// Initialize Dialogflow client (credentials automatically detected via GOOGLE_APPLICATION_CREDENTIALS)
+// Firestore setup
+const db = firebaseAdmin.firestore();
+const responsesCollection = db.collection('responses');
+
+// Initialize Dialogflow client
 const dialogflowClient = new SessionsClient();
-const projectId = process.env.DIALOGFLOW_PROJECT_ID; // Set the Dialogflow project ID in your .env
+const projectId = process.env.DIALOGFLOW_PROJECT_ID;
 
 if (!projectId) {
   console.error('DIALOGFLOW_PROJECT_ID is not set.');
@@ -53,39 +61,61 @@ if (!projectId) {
 
 // SMS route to handle incoming messages
 app.post('/sms', async (req, res) => {
-  const { Body, From } = req.body; // Get the body of the SMS and the sender's number (From)
+  const { Body, From } = req.body; // Get the SMS text and sender's phone number
 
   // Ensure 'From' is valid and use it as session ID
-  const sessionId = From || 'default-session-id'; // Fallback if From is undefined
-  const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId); // Dialogflow session path
+  const sessionId = From || 'default-session-id';
+  const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
 
-  // Create a request for Dialogflow to detect intent
-  const request = {
-    session: sessionPath,
-    queryInput: {
-      text: {
-        text: Body,
-        languageCode: 'en', // Adjust as needed for other languages
-      },
-    },
-  };
-
+  // Check Firestore to see if we have previously handled this query
   try {
-    // Detect intent from Dialogflow
-    const responses = await dialogflowClient.detectIntent(request);
+    const existingQuery = await responsesCollection
+      .where('phoneNumber', '==', From)
+      .where('userInput', '==', Body)
+      .get();
 
-    // Extract the response from Dialogflow's result
-    const dialogflowResponse = responses[0].queryResult.fulfillmentText ||
-      "I'm sorry, I couldn't understand that. Can you please clarify?";
+    if (!existingQuery.empty) {
+      const existingData = existingQuery.docs[0].data();
+      const savedResponse = existingData.response;
+      return res.status(200).send(
+        `<Response>
+          <Message>Welcome back! Here’s the info we previously shared: ${savedResponse}</Message>
+        </Response>`
+      );
+    } else {
+      // Dialogflow request for a new query
+      const request = {
+        session: sessionPath,
+        queryInput: {
+          text: {
+            text: Body,
+            languageCode: 'en',
+          },
+        },
+      };
 
-    // Send the response from Dialogflow back to the user via Twilio SMS
-    return res.status(200).send(
-      `<Response>
-        <Message>${dialogflowResponse}</Message>
-      </Response>`
-    );
+      const responses = await dialogflowClient.detectIntent(request);
+      const intentResponse = responses[0].queryResult.fulfillmentText ||
+        "I'm here to help! Could you clarify what you're looking for?";
+
+      // Save new query to Firestore
+      await responsesCollection.add({
+        phoneNumber: From,
+        userInput: Body,
+        intent: responses[0].queryResult.intent.displayName,
+        response: intentResponse,
+        timestamp: firebaseAdmin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Send response from Dialogflow to the user
+      return res.status(200).send(
+        `<Response>
+          <Message>${intentResponse}</Message>
+        </Response>`
+      );
+    }
   } catch (error) {
-    console.error('Error interacting with Dialogflow:', error);
+    console.error('Error processing request:', error);
     return res.status(500).send(
       `<Response>
         <Message>There was an error processing your request. Please try again later.</Message>
