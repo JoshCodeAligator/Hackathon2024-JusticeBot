@@ -1,8 +1,7 @@
 const express = require('express');
+const router = express.Router();
 const { handleIncomingSMS } = require('../controllers/messageController');
 
-const router = express.Router();
-
-router.post('/sms', handleIncomingSMS);
+router.post('/', handleIncomingSMS);
 
 module.exports = router;
