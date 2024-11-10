@@ -37,16 +37,16 @@ const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // Dialogflow client setup
 const dialogflowClient = new SessionsClient();
-const sessionPath = process.env.DIALOGFLOW_PROJECT_ID;
+const sessionPath = process.env.DIALOGFLOW_PROJECT_ID; // Make sure this is defined
 
 // SMS route to handle incoming messages
 app.post('/sms', async (req, res) => {
-  const { Body, From } = req.body;
+  const { Body, From } = req.body; // Get the body of the SMS and the sender's number (From)
 
   // Ensure 'From' is valid and use it as session ID
   const sessionId = From || 'default-session-id'; // Fallback if From is undefined
 
-  // Send a welcome message to the user when they first text
+  // Send a welcome message to the user when they first text "start"
   if (Body.trim().toLowerCase() === 'start') {
     return res.status(200).send(
       `<Response>
