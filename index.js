@@ -21,14 +21,22 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
+// Ensure required environment variables are set
+if (!TWILIO_PHONE_NUMBER || !TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+  console.error('Twilio credentials are missing from environment variables.');
+  process.exit(1);
+}
+
 // Initialize Twilio client
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// Initialize Firebase Admin SDK
+// Firebase Admin SDK initialization
 try {
+  // Initialize Firebase with default application credentials (uses GOOGLE_APPLICATION_CREDENTIALS)
   firebaseAdmin.initializeApp({
-    credential: firebaseAdmin.credential.applicationDefault(), // Uses GOOGLE_APPLICATION_CREDENTIALS
+    credential: firebaseAdmin.credential.applicationDefault(),
   });
+  console.log('Firebase Admin SDK initialized successfully.');
 } catch (error) {
   console.error('Error initializing Firebase Admin SDK:', error);
   process.exit(1); // Exit the app if Firebase initialization fails
@@ -37,6 +45,11 @@ try {
 // Initialize Dialogflow client (credentials automatically detected via GOOGLE_APPLICATION_CREDENTIALS)
 const dialogflowClient = new SessionsClient();
 const projectId = process.env.DIALOGFLOW_PROJECT_ID; // Set the Dialogflow project ID in your .env
+
+if (!projectId) {
+  console.error('DIALOGFLOW_PROJECT_ID is not set.');
+  process.exit(1);
+}
 
 // SMS route to handle incoming messages
 app.post('/sms', async (req, res) => {
