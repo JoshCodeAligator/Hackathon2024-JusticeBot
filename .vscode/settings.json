@@ -1,5 +1,0 @@
-{
-  "terminal.integrated.env.windows": {
-    "PATH": "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;${env:PATH}"
-  }
-}
