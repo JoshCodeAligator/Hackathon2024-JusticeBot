@@ -1,23 +1,19 @@
 // controllers/messageController.js
-const Message = require('../models/Message'); // Import the Message model
-const detectIntent = require('../config/dialogflow'); // Import Dialogflow config
-const twilioClient = require('../config/twilio'); // Import Twilio client
+const Message = require('../models/Message');
+const twilioClient = require('../config/twilio');
+const { searchDocuments } = require('../services/documentSearch'); // JSON search service
 
 async function handleIncomingSMS(req, res) {
-  const { Body, From } = req.body;
-  const projectId = process.env.DIALOGFLOW_PROJECT_ID;
+  const { Body: queryText, From } = req.body;
 
-  if (!Body || !From) {
+  if (!queryText || !From) {
     console.error('Invalid message: missing Body or From');
     return res.status(400).json({ error: 'Invalid message: Body and From are required' });
   }
 
-  // Log the message to MongoDB
+  // Save the incoming message to MongoDB
   try {
-    const message = new Message({
-      phoneNumber: From,
-      text: Body,
-    });
+    const message = new Message({ phoneNumber: From, text: queryText });
     await message.save();
     console.log('Message logged to MongoDB');
   } catch (error) {
@@ -25,19 +21,33 @@ async function handleIncomingSMS(req, res) {
     return res.status(500).send('Error logging message');
   }
 
-  // Pass message text to Dialogflow
+  // Perform JSON search and generate a response
   try {
-    const dialogflowResponse = await detectIntent(projectId, From, Body); // Body is user message
-    const responseMessage = dialogflowResponse.fulfillmentText || "I'm not sure how to respond to that.";
+    console.log('Searching JSON documents for:', queryText);
+    const searchResults = await searchDocuments(queryText); // Search the JSON files with the query
 
-    // Send the response back to the user via Twilio
-    await twilioClient.messages.create({
-      body: responseMessage,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: From,
-    });
+    // Construct response from search results
+    let responseMessage = 'No relevant information found in Alberta government documents.';
+    if (searchResults && searchResults.length > 0) {
+      responseMessage = searchResults
+        .map((result, index) => `Result ${index + 1} from ${result.fileName}:\n"${result.snippet}"`)
+        .join('\n\n');
+    }
 
-    res.status(200).send('Message sent!');
+    console.log('Response Message:', responseMessage);
+
+    // Send the response via Twilio
+    if (responseMessage.trim()) {
+      await twilioClient.messages.create({
+        body: responseMessage,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: From,
+      });
+      res.status(200).send('Message sent!');
+    } else {
+      console.error('No response message to send.');
+      res.status(400).send('No response message to send.');
+    }
   } catch (error) {
     console.error('Error processing or sending message:', error);
     res.status(500).send('Error processing or sending message');
