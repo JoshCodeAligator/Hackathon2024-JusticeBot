@@ -3,8 +3,6 @@ const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
 const firebaseAdmin = require('firebase-admin'); // Firebase admin SDK
-const fs = require('fs');
-const path = require('path');
 
 // Initialize Express App
 const app = express();
@@ -26,25 +24,17 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 // Initialize Twilio client
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// Firebase Secret (Base64 encoded in environment variable)
-const base64FirebaseSecret = process.env.DIALOGFLOW_FIREBASE_SECRET;
-const firebaseSecret = Buffer.from(base64FirebaseSecret, 'base64').toString('utf8');
-const firebaseSecretPath = path.join(__dirname, 'firebase_secret.json');
-
-// Write the decoded secret to a temporary file
-fs.writeFileSync(firebaseSecretPath, firebaseSecret);
-
 // Initialize Firebase Admin SDK
 try {
   firebaseAdmin.initializeApp({
-    credential: firebaseAdmin.credential.cert(firebaseSecretPath), // Use the secret file
+    credential: firebaseAdmin.credential.applicationDefault(), // Uses GOOGLE_APPLICATION_CREDENTIALS
   });
 } catch (error) {
   console.error('Error initializing Firebase Admin SDK:', error);
   process.exit(1); // Exit the app if Firebase initialization fails
 }
 
-// Initialize Dialogflow client
+// Initialize Dialogflow client (credentials automatically detected via GOOGLE_APPLICATION_CREDENTIALS)
 const dialogflowClient = new SessionsClient();
 const projectId = process.env.DIALOGFLOW_PROJECT_ID; // Set the Dialogflow project ID in your .env
 
