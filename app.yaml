@@ -1,0 +1,5 @@
+runtime: nodejs16
+env_variables:
+  GOOGLE_APPLICATION_CREDENTIALS: "./firebase-admin-key.json"
+  TWILIO_ACCOUNT_SID: "your_twilio_account_sid"
+  TWILIO_AUTH_TOKEN: "your_twilio_auth_token"
