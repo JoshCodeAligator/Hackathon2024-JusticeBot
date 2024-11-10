@@ -1,10 +1,13 @@
 const db = require('../config/firebase');
 const twilioClient = require('../config/twilio');
 const detectIntent = require('../config/dialogflow');
+const { searchDocuments } = require('../services/documentSearch');
 
 async function handleIncomingSMS(req, res) {
+  // Log to verify request payload
+  console.log(req.body);
+
   const { Body, From } = req.body;
-  const projectId = process.env.DIALOGFLOW_PROJECT_ID;
 
   if (!Body || !From) {
     console.error('Invalid message: missing Body or From');
@@ -15,7 +18,6 @@ async function handleIncomingSMS(req, res) {
 
   try {
     await userRef.set({ phoneNumber: From }, { merge: true });
-
     await userRef.update({
       chatHistory: admin.firestore.FieldValue.arrayUnion({
         text: Body,
@@ -28,9 +30,19 @@ async function handleIncomingSMS(req, res) {
     return res.status(500).send('Error logging message');
   }
 
+  let responseMessage;
   try {
-    const dialogflowResponse = await detectIntent(projectId, From, Body);
-    const responseMessage = dialogflowResponse.fulfillmentText || "I'm not sure how to respond to that.";
+    const dialogflowResponse = await detectIntent(process.env.DIALOGFLOW_PROJECT_ID, From, Body);
+    const { fulfillmentText, isAlbertaDocumentSearch } = dialogflowResponse;
+
+    if (isAlbertaDocumentSearch) {
+      const searchResults = searchDocuments(Body);
+      responseMessage = searchResults.length
+        ? searchResults.map(result => `Found in ${result.fileName}:\n${result.snippet}`).join('\n\n')
+        : "Sorry, I couldn't find any information related to that in Alberta government documents.";
+    } else {
+      responseMessage = fulfillmentText || "I'm not sure how to respond to that.";
+    }
 
     await twilioClient.messages.create({
       body: responseMessage,
