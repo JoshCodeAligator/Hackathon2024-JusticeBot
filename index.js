@@ -4,6 +4,10 @@ const twilio = require('twilio');
 const admin = require('firebase-admin');
 const dialogflow = require('@google-cloud/dialogflow');
 
+// Initialize Express App
+const app = express();
+app.use(express.json());
+
 // Initialize Firebase with the Firebase Admin SDK key
 const serviceAccount = require('./firebase-admin-key.json'); // Adjust path if necessary
 admin.initializeApp({
@@ -37,7 +41,7 @@ async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
   return responses[0].queryResult;
 }
 
-// Add a route to get messages by phone number
+// Route to get messages by phone number
 app.get('/api/messages', async (req, res) => {
   const phone = req.query.phone;
 
@@ -64,10 +68,6 @@ app.get('/api/messages', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
-
-// Express setup
-const app = express();
-app.use(express.json());
 
 // Route to handle incoming SMS
 app.post('/sms', async (req, res) => {
