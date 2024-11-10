@@ -1,10 +1,11 @@
 // controllers/messageController.js
-const Message = require('../models/Message');
-const twilioClient = require('../config/twilio');
-const detectIntent = require('../config/dialogflow');
+const Message = require('../models/Message'); // Import the Message model
+const detectIntent = require('../config/dialogflow'); // Import Dialogflow config
+const twilioClient = require('../config/twilio'); // Import Twilio client
 
 async function handleIncomingSMS(req, res) {
   const { Body, From } = req.body;
+  const projectId = process.env.DIALOGFLOW_PROJECT_ID;
 
   if (!Body || !From) {
     console.error('Invalid message: missing Body or From');
@@ -24,11 +25,12 @@ async function handleIncomingSMS(req, res) {
     return res.status(500).send('Error logging message');
   }
 
-  // Process the message with Dialogflow and send a response
+  // Pass message text to Dialogflow
   try {
-    const dialogflowResponse = await detectIntent(process.env.DIALOGFLOW_PROJECT_ID, From, Body);
+    const dialogflowResponse = await detectIntent(projectId, From, Body); // Body is user message
     const responseMessage = dialogflowResponse.fulfillmentText || "I'm not sure how to respond to that.";
 
+    // Send the response back to the user via Twilio
     await twilioClient.messages.create({
       body: responseMessage,
       from: process.env.TWILIO_PHONE_NUMBER,
@@ -45,3 +47,4 @@ async function handleIncomingSMS(req, res) {
 module.exports = {
   handleIncomingSMS,
 };
+

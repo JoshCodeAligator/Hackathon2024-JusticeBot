@@ -1,42 +1,30 @@
 // config/dialogflow.js
 const { SessionsClient } = require('@google-cloud/dialogflow');
-const { searchDocuments } = require('../services/documentSearch');
 
-const sessionClient = new SessionsClient({
-  keyFilename: './config/firebase-admin-key.json', // Ensure the key file exists for Dialogflow
-});
+const sessionClient = new SessionsClient();
 
 async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
+  if (!projectId) {
+    throw new Error('Project ID is required');
+  }
+  if (!sessionId) {
+    throw new Error('Session ID is required');
+  }
+
   const sessionPath = sessionClient.projectAgentSessionPath(projectId, sessionId);
 
   const request = {
     session: sessionPath,
     queryInput: {
       text: {
-        text: query,
+        text: query, // The query text (user message)
         languageCode,
       },
     },
   };
 
   const responses = await sessionClient.detectIntent(request);
-  const result = responses[0].queryResult;
-
-  // If Dialogflow recognizes an intent to fetch from documents
-  if (result.intent && result.intent.displayName === 'DocumentSearchIntent') {
-    const documentResults = searchDocuments(result.queryText);
-    if (documentResults.length > 0) {
-      return {
-        fulfillmentText: `Here is what I found in the Alberta documents:\n${documentResults
-          .map(doc => `${doc.fileName}: ${doc.textSnippet}`)
-          .join('\n')}`,
-      };
-    } else {
-      return { fulfillmentText: "I'm sorry, I couldn't find any relevant information in the Alberta documents." };
-    }
-  }
-
-  return result;
+  return responses[0].queryResult;
 }
 
 module.exports = detectIntent;
