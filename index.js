@@ -17,9 +17,15 @@ app.get('/', (req, res) => {
 });
 
 // Initialize Firebase Admin SDK
-firebaseAdmin.initializeApp({
-  credential: firebaseAdmin.credential.cert(require(process.env.FIREBASE_SECRET_KEY)), // Firebase service account JSON
-});
+try {
+  const firebaseCredentials = JSON.parse(process.env.FIREBASE_SECRET_KEY); // Parse the JSON string from the env variable
+  firebaseAdmin.initializeApp({
+    credential: firebaseAdmin.credential.cert(firebaseCredentials), // Use parsed JSON object as credentials
+  });
+} catch (error) {
+  console.error('Error initializing Firebase Admin SDK:', error);
+  process.exit(1); // Exit the app if Firebase initialization fails
+}
 
 // Twilio credentials
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
@@ -38,7 +44,7 @@ app.post('/sms', async (req, res) => {
   const { Body, From } = req.body;
 
   // Ensure 'From' is valid and use it as session ID
-  const sessionId = From ? From : 'default-session-id'; // Fallback if From is undefined
+  const sessionId = From || 'default-session-id'; // Fallback if From is undefined
 
   // Send a welcome message to the user when they first text
   if (Body.trim().toLowerCase() === 'start') {
