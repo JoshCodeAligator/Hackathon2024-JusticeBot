@@ -18,7 +18,7 @@ app.get('/', (req, res) => {
 
 // Initialize Firebase Admin SDK
 firebaseAdmin.initializeApp({
-  credential: firebaseAdmin.credential.cert(require(process.env.GOOGLE_APPLICATION_CREDENTIALS)), // Firebase service account JSON
+  credential: firebaseAdmin.credential.cert(require(process.env.FIREBASE_SECRET_KEY)), // Firebase service account JSON
 });
 
 // Twilio credentials
@@ -37,6 +37,9 @@ const sessionPath = process.env.DIALOGFLOW_PROJECT_ID;
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body;
 
+  // Ensure 'From' is valid and use it as session ID
+  const sessionId = From ? From : 'default-session-id'; // Fallback if From is undefined
+
   // Send a welcome message to the user when they first text
   if (Body.trim().toLowerCase() === 'start') {
     return res.status(200).send(
@@ -47,7 +50,6 @@ app.post('/sms', async (req, res) => {
   }
 
   // Setup Dialogflow session path
-  const sessionId = From; // Use the user's phone number as a unique session ID
   const session = dialogflowClient.projectAgentSessionPath(process.env.DIALOGFLOW_PROJECT_ID, sessionId);
 
   // Send the incoming SMS body to Dialogflow to detect intent
