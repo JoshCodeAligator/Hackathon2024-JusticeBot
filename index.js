@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: true }));
 // Route to handle GET requests to the root
 app.get('/', (req, res) => {
   res.send(`
-    <h1>Welcome to JustRights API!</h1>
+    <h1>Welcome to JustBot API!</h1>
     <p>We’re here to help you understand your rights and protections, especially under Alberta’s Human Rights framework. Just send a message, and our chatbot will provide the information you need or direct you to helpful resources. Your privacy is important to us, and we track common questions to respond faster in the future.</p>
     <p>How can I assist you today?</p>
 
@@ -62,7 +62,7 @@ if (!projectId) {
 const sendIntroMessage = (res) => {
   return res.status(200).send(
     `<Response>
-      <Message>Welcome to JustRights! If you're feeling uncertain or need quick answers, we're here to help. Just let us know what you're facing, and we’ll provide clear, real-time information about your rights based on your location.</Message>
+      <Message>Welcome to JustBot! If you're feeling uncertain or need quick answers, we're here to help. Just let us know what you're facing, and we’ll provide clear, real-time information about your rights based on your location.</Message>
     </Response>`
   );
 };
