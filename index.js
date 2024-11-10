@@ -2,14 +2,14 @@ require('dotenv').config();
 const express = require('express');
 const twilio = require('twilio');
 const admin = require('firebase-admin');
-const dialogflow = require('@google-cloud/dialogflow');
+const { SessionsClient } = require('@google-cloud/dialogflow');
 
 // Initialize Express App
 const app = express();
 app.use(express.json());
 
 // Initialize Firebase with the Firebase Admin SDK key
-const serviceAccount = require('./firebase-admin-key.json'); // Adjust path if necessary
+const serviceAccount = require('./firebase-admin-key.json');
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -20,12 +20,13 @@ const db = admin.firestore();
 // Initialize Twilio
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// Initialize Dialogflow using the existing Firebase credentials
-const sessionClient = new dialogflow.SessionsClient(); // Uses Firebase credentials
+// Initialize Dialogflow Client
+const dialogflowClient = new SessionsClient();
+const projectId = process.env.DIALOGFLOW_PROJECT_ID;
 
 // Helper function to detect intent with Dialogflow
 async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
-  const sessionPath = sessionClient.projectAgentSessionPath(projectId, sessionId);
+  const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
 
   const request = {
     session: sessionPath,
@@ -37,7 +38,7 @@ async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
     },
   };
 
-  const responses = await sessionClient.detectIntent(request);
+  const responses = await dialogflowClient.detectIntent(request);
   return responses[0].queryResult;
 }
 
@@ -72,41 +73,73 @@ app.get('/api/messages', async (req, res) => {
 // Route to handle incoming SMS
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body;
-  const projectId = 'your-dialogflow-project-id'; // Replace with your Dialogflow project ID
 
-  // Log the incoming SMS to Firestore
-  try {
-    await db.collection('messages').add({
-      text: Body,
-      sender: From,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+  // Log the incoming SMS to Firestore and check if the user exists
+  const userRef = db.collection('users').doc(From);
+  const userDoc = await userRef.get();
+
+  if (!userDoc.exists) {
+    await userRef.set({
+      phoneNumber: From,
+      previousMessages: [],
     });
-    console.log('Message logged to Firestore');
-  } catch (error) {
-    console.error('Error logging message to Firestore:', error);
   }
 
-  // Send the message to Dialogflow and get the response
-  let responseMessage;
-  try {
-    const dialogflowResponse = await detectIntent(projectId, From, Body);
-    responseMessage = dialogflowResponse.fulfillmentText || "I'm not sure how to respond to that.";
-  } catch (error) {
-    console.error('Error processing message with Dialogflow:', error);
-    responseMessage = 'Sorry, something went wrong while processing your message.';
-  }
-
-  // Send the Dialogflow response back to the user via Twilio
-  try {
+  // Check for specific options
+  if (Body.toLowerCase() === 'hi') {
+    const optionsMessage = 'Hello! Please choose an option:\n1. Get Info\n2. Help\nReply with the number of your choice.';
     await twilioClient.messages.create({
-      body: responseMessage,
-      from: process.env.TWILIO_PHONE_NUMBER, // Ensure this is set in your .env file
+      body: optionsMessage,
+      from: process.env.TWILIO_PHONE_NUMBER,
       to: From,
     });
+    res.status(200).send('Options sent!');
+    return;
+  }
+
+  if (Body === '1' || Body === '2') {
+    const responseMessage = Body === '1'
+      ? 'You selected "Get Info". Here is the information you requested...'
+      : 'You selected "Help". How can I assist you further?';
+
+    await userRef.update({
+      previousMessages: admin.firestore.FieldValue.arrayUnion({
+        message: Body,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      }),
+    });
+
+    await twilioClient.messages.create({
+      body: responseMessage,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: From,
+    });
+    res.status(200).send('Response sent!');
+    return;
+  }
+
+  // Handle non-option responses with Dialogflow
+  try {
+    const dialogflowResponse = await detectIntent(projectId, From, Body);
+    const responseMessage = dialogflowResponse.fulfillmentText || "I'm not sure how to respond to that.";
+
+    await userRef.update({
+      previousMessages: admin.firestore.FieldValue.arrayUnion({
+        message: Body,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      }),
+    });
+
+    await twilioClient.messages.create({
+      body: responseMessage,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: From,
+    });
+
     res.status(200).send('Message sent!');
   } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).send('Error sending message');
+    console.error('Error processing message with Dialogflow:', error);
+    res.status(500).send('Error processing message');
   }
 });
 
