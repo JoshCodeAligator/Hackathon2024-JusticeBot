@@ -19,7 +19,7 @@ const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_A
 // Initialize Dialogflow using the existing Firebase credentials
 const sessionClient = new dialogflow.SessionsClient(); // Uses Firebase credentials
 
-//Helper to detect initent
+// Helper function to detect intent with Dialogflow
 async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
   const sessionPath = sessionClient.projectAgentSessionPath(projectId, sessionId);
 
@@ -37,18 +37,44 @@ async function detectIntent(projectId, sessionId, query, languageCode = 'en') {
   return responses[0].queryResult;
 }
 
+// Add a route to get messages by phone number
+app.get('/api/messages', async (req, res) => {
+  const phone = req.query.phone;
+
+  if (!phone) {
+    return res.status(400).json({ error: 'Phone number is required' });
+  }
+
+  try {
+    const messagesRef = db.collection('messages');
+    const snapshot = await messagesRef.where('sender', '==', phone).orderBy('timestamp', 'desc').get();
+
+    if (snapshot.empty) {
+      return res.json([]);
+    }
+
+    const messages = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    res.json(messages);
+  } catch (error) {
+    console.error('Error fetching messages:', error);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
 // Express setup
 const app = express();
 app.use(express.json());
 
-// Basic route to handle incoming SMS
+// Route to handle incoming SMS
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body;
+  const projectId = 'your-dialogflow-project-id'; // Replace with your Dialogflow project ID
 
-  // Example response message
-  const responseMessage = `Hello, you sent: ${Body}`;
-
-  // Log the SMS to Firestore
+  // Log the incoming SMS to Firestore
   try {
     await db.collection('messages').add({
       text: Body,
@@ -60,11 +86,21 @@ app.post('/sms', async (req, res) => {
     console.error('Error logging message to Firestore:', error);
   }
 
-  // Send SMS response
+  // Send the message to Dialogflow and get the response
+  let responseMessage;
+  try {
+    const dialogflowResponse = await detectIntent(projectId, From, Body);
+    responseMessage = dialogflowResponse.fulfillmentText || "I'm not sure how to respond to that.";
+  } catch (error) {
+    console.error('Error processing message with Dialogflow:', error);
+    responseMessage = 'Sorry, something went wrong while processing your message.';
+  }
+
+  // Send the Dialogflow response back to the user via Twilio
   try {
     await twilioClient.messages.create({
       body: responseMessage,
-      from: +13205230818, // Your Twilio phone number
+      from: process.env.TWILIO_PHONE_NUMBER, // Ensure this is set in your .env file
       to: From,
     });
     res.status(200).send('Message sent!');
