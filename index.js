@@ -4,9 +4,7 @@ const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
 const { DiscoveryEngineServiceClient } = require('@google-cloud/discoveryengine');
 const firebaseAdmin = require('firebase-admin'); // Firebase admin SDK
-const discoveryClient = new DiscoveryEngineServiceClient({
-  apiEndpoint: 'us-discoveryengine.googleapis.com', // Use the correct region endpoint
-});
+const discoveryClient = new DiscoveryEngineServiceClient();
 
 
 // Initialize Express App
