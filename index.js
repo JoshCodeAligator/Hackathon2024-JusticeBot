@@ -2,10 +2,10 @@ const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
-const { DiscoveryEngineClient } = require('@google-cloud/discoveryengine');
+const { DiscoveryEngineServiceClient } = require('@google-cloud/discoveryengine');
 const firebaseAdmin = require('firebase-admin'); // Firebase admin SDK
-const discoveryClient = new DiscoveryEngineClient({
-  apiEndpoint: 'us-discoveryengine.googleapis.com', // Use US region endpoint
+const discoveryClient = new DiscoveryEngineServiceClient({
+  apiEndpoint: 'us-discoveryengine.googleapis.com', // Use the correct region endpoint
 });
 
 
