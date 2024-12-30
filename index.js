@@ -2,10 +2,11 @@ const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
-const { DiscoveryEngineServiceClient } = require('@google-cloud/discoveryengine');
+const { SearchServiceClient } = require('@google-cloud/discoveryengine');
 const firebaseAdmin = require('firebase-admin'); // Firebase admin SDK
-const discoveryClient = new DiscoveryEngineServiceClient();
-
+const discoveryClient = new SearchServiceClient({
+  apiEndpoint: 'us-discoveryengine.googleapis.com', // Specify the correct region
+});
 
 // Initialize Express App
 const app = express();
