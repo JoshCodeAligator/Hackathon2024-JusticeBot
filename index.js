@@ -2,7 +2,10 @@ const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
+const { DiscoveryEngineServiceClient } = require('@google-cloud/discoveryengine');
 const firebaseAdmin = require('firebase-admin'); // Firebase admin SDK
+const discoveryClient = new DiscoveryEngineServiceClient();
+
 
 // Initialize Express App
 const app = express();
@@ -32,6 +35,44 @@ async function getUserLocation(ip) {
   }
 }
 
+async function queryVertexAI(query, location) {
+  const searchQuery = `${query} in ${location}`;
+  const request = {
+    servingConfig: 'projects/justicebot-441223/locations/us/dataStores/static-docs-search_1735535987304/servingConfigs/default_config',
+    query: searchQuery,
+  };
+
+  try {
+    const [response] = await discoveryClient.search(request);
+    return response.results.map(result => ({
+      title: result.document.title,
+      snippet: result.document.snippet,
+    }));
+  } catch (error) {
+    console.error('Error querying Vertex AI Search:', error);
+    return [];
+  }
+}
+
+async function queryGoogleCustomSearch(query, location) {
+  const API_KEY = process.env.GOOGLE_CSE_API_KEY;
+  const CX = process.env.GOOGLE_CSE_ID;
+
+  try {
+    const searchQuery = `${query} in ${location}`;
+    const response = await axios.get(
+      `https://www.googleapis.com/customsearch/v1?q=${searchQuery}&cx=${CX}&key=${API_KEY}`
+    );
+    return response.data.items.map(item => ({
+      title: item.title,
+      snippet: item.snippet,
+      link: item.link,
+    }));
+  } catch (error) {
+    console.error('Error querying Google Custom Search API:', error);
+    return [];
+  }
+}
 
 // Twilio credentials
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
@@ -82,27 +123,27 @@ const sendIntroMessage = (res) => {
 
 // SMS route to handle incoming messages
 app.post('/sms', async (req, res) => {
-  const { Body, From } = req.body; // Get the SMS text and sender's phone number
+  const { Body, From } = req.body;
 
   // Get the user's IP address
-  const userIP = req.ip || '8.8.8.8'; // Use the actual IP or a fallback for testing
+  const userIP = req.ip || '8.8.8.8';
 
   // Fetch the user's location from IPinfo API
   const userLocation = await getUserLocation(userIP);
-  console.log("User's Location:", userLocation); // Log location for backend use
+  const province = userLocation?.region || 'Unknown';
+  console.log("User's Location:", province);
 
-  
   // Ensure 'From' is valid and use it as session ID
   const sessionId = From || 'default-session-id';
   const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
 
-  // Check if the user is asking for "about bot" or "reset"
+  // Check if the user is asking for "about bot"
   if (Body.toLowerCase().includes('about bot')) {
-    return sendIntroMessage(res); // Send the intro message again
+    return sendIntroMessage(res);
   }
 
-  // Check Firestore to see if we have previously handled this query
   try {
+    // Check Firestore for previously handled queries
     const existingQuery = await responsesCollection
       .where('phoneNumber', '==', From)
       .where('userInput', '==', Body)
@@ -130,22 +171,37 @@ app.post('/sms', async (req, res) => {
 
       const responses = await dialogflowClient.detectIntent(request);
       const queryResult = responses[0].queryResult;
+      const intent = queryResult.intent?.displayName || "Unknown";
       const intentResponse = queryResult.fulfillmentText || "I'm here to help! Could you clarify what you're looking for?";
 
-      // Only store if an intent is retrieved
-      if (queryResult.intent) {
-        await responsesCollection.add({
-          phoneNumber: From,
-          userInput: Body,
-          intent: queryResult.intent.displayName,
-          response: intentResponse
-        });
-      }
+      // Query Vertex AI Search for static documents
+      const vertexResults = await queryVertexAI(Body, province);
 
-      // Send response from Dialogflow to the user
+      // Query Google Custom Search API for dynamic resources
+      const googleResults = await queryGoogleCustomSearch(Body, province);
+
+      // Combine and format results
+      const combinedResults = [
+        ...vertexResults,
+        ...googleResults,
+      ].slice(0, 3);
+
+      const responseText = combinedResults.length > 0
+        ? combinedResults.map(result => `${result.title}: ${result.snippet}`).join('\n\n')
+        : intentResponse;
+
+      // Save response to Firestore
+      await responsesCollection.add({
+        phoneNumber: From,
+        userInput: Body,
+        intent: intent,
+        response: responseText,
+      });
+
+      // Send response to the user
       return res.status(200).send(
         `<Response>
-          <Message>${intentResponse}</Message>
+          <Message>${responseText}</Message>
         </Response>`
       );
     }
