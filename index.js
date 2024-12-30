@@ -1,3 +1,4 @@
+const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
@@ -16,9 +17,21 @@ app.get('/', (req, res) => {
     <h1>Welcome to JustBot API!</h1>
     <p>We’re here to help you understand your rights and protections, especially under Alberta’s Human Rights framework. Just send a message, and our chatbot will provide the information you need or direct you to helpful resources. Your privacy is important to us, and we track common questions to respond faster in the future.</p>
     <p>How can I assist you today?</p>
-
   `);
 });
+
+//Helper function to fetch user's location
+async function getUserLocation(ip) {
+  const API_KEY = process.env.IPINFO_API_KEY;
+  try {
+    const response = await axios.get(`https://ipinfo.io/${ip}/json?token=${API_KEY}`);
+    return response.data; // Returns { city, region, country, ... }
+  } catch (error) {
+    console.error('Error fetching location from IPinfo:', error);
+    return null;
+  }
+}
+
 
 // Twilio credentials
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
@@ -71,6 +84,14 @@ const sendIntroMessage = (res) => {
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body; // Get the SMS text and sender's phone number
 
+  // Get the user's IP address
+  const userIP = req.ip || '8.8.8.8'; // Use the actual IP or a fallback for testing
+
+  // Fetch the user's location from IPinfo API
+  const userLocation = await getUserLocation(userIP);
+  console.log("User's Location:", userLocation); // Log location for backend use
+
+  
   // Ensure 'From' is valid and use it as session ID
   const sessionId = From || 'default-session-id';
   const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
