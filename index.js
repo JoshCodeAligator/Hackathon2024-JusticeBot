@@ -29,7 +29,7 @@ async function getUserLocation(ip) {
   const API_KEY = process.env.IPINFO_API_KEY;
   try {
     const response = await axios.get(`https://ipinfo.io/${ip}/json?token=${API_KEY}`);
-    print(response.data)
+    console.log(response.data)
     return response.data; // Returns { city, region, country, ... }
   } catch (error) {
     console.error('Error fetching location from IPinfo:', error);
