@@ -49,15 +49,23 @@ async function queryVertexAI(query, location) {
 
   try {
     const [response] = await discoveryClient.search(request);
-    return response.results.map(result => ({
-      title: result.document.title,
-      snippet: result.document.snippet,
-    }));
+
+    // Check if results exist and are an array
+    if (response.results && Array.isArray(response.results)) {
+      return response.results.map(result => ({
+        title: result.document.title,
+        snippet: result.document.snippet,
+      }));
+    } else {
+      console.error('No results found in Vertex AI Search response:', response);
+      return []; // Return an empty array if results are missing
+    }
   } catch (error) {
     console.error('Error querying Vertex AI Search:', error);
-    return [];
+    return []; // Return an empty array on error
   }
 }
+
 
 // Helper function to query Google Custom Search API
 async function queryGoogleCustomSearch(query, location) {
