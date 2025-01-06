@@ -1,21 +1,17 @@
 const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
-const { SessionsClient } = require('@google-cloud/dialogflow'); // Dialogflow client
+const { SessionsClient } = require('@google-cloud/dialogflow');
 const { SearchServiceClient } = require('@google-cloud/discoveryengine');
-const firebaseAdmin = require('firebase-admin'); // Firebase admin SDK
+const firebaseAdmin = require('firebase-admin');
 const discoveryClient = new SearchServiceClient({
-  apiEndpoint: 'us-discoveryengine.googleapis.com', // Specify the correct region
+  apiEndpoint: 'us-discoveryengine.googleapis.com',
 });
 
-// Initialize Express App
 const app = express();
-
-// Middleware to parse JSON and URL-encoded form data (Twilio format)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Route to handle GET requests to the root
 app.get('/', (req, res) => {
   res.send(`
     <h1>Welcome to JustBot API!</h1>
@@ -24,22 +20,19 @@ app.get('/', (req, res) => {
   `);
 });
 
-// Helper function to preprocess user query
 const preprocessQuery = (query) => query.trim().toLowerCase();
 
-// Helper function to fetch user's location
 async function getUserLocation(ip) {
   const API_KEY = process.env.IPINFO_API_KEY;
   try {
     const response = await axios.get(`https://ipinfo.io/${ip}/json?token=${API_KEY}`);
-    return response.data; // Returns { city, region, country, ... }
+    return response.data;
   } catch (error) {
-    console.error('Error fetching location from IPinfo:', error);
+    console.error('Error fetching location:', error);
     return null;
   }
 }
 
-// Helper function to query Vertex AI Search
 async function queryVertexAI(query, location) {
   const searchQuery = `${query} in ${location}`;
   const request = {
@@ -49,8 +42,6 @@ async function queryVertexAI(query, location) {
 
   try {
     const [response] = await discoveryClient.search(request);
-
-    // Check if results exist and are an array
     if (response.results && Array.isArray(response.results)) {
       return response.results.map(result => ({
         title: result.document.title,
@@ -58,16 +49,14 @@ async function queryVertexAI(query, location) {
       }));
     } else {
       console.error('No results found in Vertex AI Search response:', response);
-      return []; // Return an empty array if results are missing
+      return [];
     }
   } catch (error) {
     console.error('Error querying Vertex AI Search:', error);
-    return []; // Return an empty array on error
+    return [];
   }
 }
 
-
-// Helper function to query Google Custom Search API
 async function queryGoogleCustomSearch(query, location) {
   const API_KEY = process.env.GOOGLE_CSE_API_KEY;
   const CX = process.env.GOOGLE_CSE_ID;
@@ -88,36 +77,30 @@ async function queryGoogleCustomSearch(query, location) {
   }
 }
 
-// Twilio credentials
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 
-// Ensure required environment variables are set
 if (!TWILIO_PHONE_NUMBER || !TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
-  console.error('Twilio credentials are missing from environment variables.');
+  console.error('Twilio credentials are missing.');
   process.exit(1);
 }
 
-// Initialize Twilio client
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// Firebase Admin SDK initialization
 try {
   firebaseAdmin.initializeApp({
     credential: firebaseAdmin.credential.applicationDefault(),
   });
-  console.log('Firebase Admin SDK initialized successfully.');
+  console.log('Firebase Admin SDK initialized.');
 } catch (error) {
   console.error('Error initializing Firebase Admin SDK:', error);
   process.exit(1);
 }
 
-// Firestore setup
 const db = firebaseAdmin.firestore();
 const responsesCollection = db.collection('responses');
 
-// Initialize Dialogflow client
 const dialogflowClient = new SessionsClient();
 const projectId = process.env.DIALOGFLOW_PROJECT_ID;
 
@@ -126,41 +109,41 @@ if (!projectId) {
   process.exit(1);
 }
 
-// Helper function to rank responses
-const rankResponses = (intentResponse, vertexResults, googleResults) => {
-  const results = [
-    { source: 'Dialogflow', text: intentResponse, confidence: 0.9 },
-    ...vertexResults.map(res => ({ source: 'Vertex AI', text: `${res.title}: ${res.snippet}`, confidence: 0.7 })),
-    ...googleResults.map(res => ({ source: 'Google', text: `${res.title}: ${res.snippet}`, confidence: 0.6 })),
-  ];
-  return results.sort((a, b) => b.confidence - a.confidence).slice(0, 3).map(res => res.text);
+const summarizeResponses = async (responses) => {
+  try {
+    const combinedText = responses.join(' ');
+    const summary = await axios.post('https://api.openai.com/v1/completions', {
+      prompt: `Summarize this information into one concise and relevant response: ${combinedText}`,
+      max_tokens: 100,
+      temperature: 0.7,
+    }, {
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    });
+    return summary.data.choices[0].text.trim();
+  } catch (error) {
+    console.error('Error summarizing responses:', error);
+    return responses[0];
+  }
 };
 
-// Helper function to contextualize responses
 const contextualizeResponse = (response, location, intent) => {
+  const locationText = location !== 'Unknown' ? `specific to users in ${location}` : 'relevant to all users';
   return `${response}
 
-This information is tailored for users in ${location}. Intent detected: ${intent}.`;
+This response is ${locationText}. Detected intent: ${intent}.`;
 };
 
-// SMS route to handle incoming messages
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body;
   const userQuery = preprocessQuery(Body);
-
-  // Get the user's IP address
   const userIP = req.ip || '8.8.8.8';
 
-  // Fetch the user's location from IPinfo API
   const userLocation = await getUserLocation(userIP);
   const province = userLocation?.region || 'Unknown';
-
-  // Ensure 'From' is valid and use it as session ID
   const sessionId = From || 'default-session-id';
   const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
 
   try {
-    // Check Firestore for previously handled queries
     const existingQuery = await responsesCollection
       .where('phoneNumber', '==', From)
       .where('userInput', '==', Body)
@@ -168,15 +151,13 @@ app.post('/sms', async (req, res) => {
       .get();
 
     if (!existingQuery.empty) {
-      const existingData = existingQuery.docs[0].data();
-      const savedResponse = existingData.response;
+      const savedResponse = existingQuery.docs[0].data().response;
       return res.status(200).send(
         `<Response>
           <Message>Welcome back! Here’s the info we previously shared: ${savedResponse}</Message>
         </Response>`
       );
     } else {
-      // Dialogflow request for a new query
       const request = {
         session: sessionPath,
         queryInput: {
@@ -189,31 +170,31 @@ app.post('/sms', async (req, res) => {
 
       const responses = await dialogflowClient.detectIntent(request);
       const queryResult = responses[0].queryResult;
-      const intent = queryResult.intent?.displayName || "Unknown";
+      const intent = queryResult.intent?.displayName || 'Unknown';
       const intentResponse = queryResult.fulfillmentText || "I'm here to help! Could you clarify what you're looking for?";
 
-      // Query Vertex AI Search for static documents
       const vertexResults = await queryVertexAI(userQuery, province);
-
-      // Query Google Custom Search API for dynamic resources
       const googleResults = await queryGoogleCustomSearch(userQuery, province);
 
-      // Rank and contextualize responses
-      const bestResponses = rankResponses(intentResponse, vertexResults, googleResults);
-      const contextualResponse = contextualizeResponse(bestResponses.join('\n\n'), province, intent);
+      const allResponses = [
+        intentResponse,
+        ...vertexResults.map(res => `${res.title}: ${res.snippet}`),
+        ...googleResults.map(res => `${res.title}: ${res.snippet}`),
+      ];
 
-      // Save response to Firestore
+      const summarizedResponse = await summarizeResponses(allResponses);
+      const tailoredResponse = contextualizeResponse(summarizedResponse, province, intent);
+
       await responsesCollection.add({
         phoneNumber: From,
         userInput: Body,
         intent: intent,
-        response: contextualResponse,
+        response: tailoredResponse,
       });
 
-      // Send response to the user
       return res.status(200).send(
         `<Response>
-          <Message>${contextualResponse}</Message>
+          <Message>${tailoredResponse}</Message>
         </Response>`
       );
     }
@@ -227,7 +208,6 @@ app.post('/sms', async (req, res) => {
   }
 });
 
-// Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
