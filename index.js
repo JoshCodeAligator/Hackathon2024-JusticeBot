@@ -78,13 +78,25 @@ async function queryVertexAI(query, location) {
 
   try {
     const [response] = await discoveryClient.search(request);
-    return (response.results || []).map((result) => ({
+    const results = (response.results || []).map((result) => ({
       source: 'VertexAI',
       content: `${result.document.title}: ${result.document.snippet}`,
     }));
+
+    // Fallback if no results
+    if (results.length === 0) {
+      results.push({
+        source: 'VertexAI',
+        content: `No relevant information found in the VertexAI search for your query. Please provide more details.`,
+      });
+    }
+    return results;
   } catch (error) {
     console.error('Error querying Vertex AI Search:', error);
-    return [];
+    return [{
+      source: 'VertexAI',
+      content: `Error occurred while querying VertexAI. Please try again later.`,
+    }];
   }
 }
 
@@ -97,13 +109,25 @@ async function queryGoogleCustomSearch(query, location) {
     const response = await axios.get(
       `https://www.googleapis.com/customsearch/v1?q=${searchQuery}&cx=${CX}&key=${API_KEY}`
     );
-    return (response.data.items || []).map((item) => ({
+    const results = (response.data.items || []).map((item) => ({
       source: 'GoogleCSE',
       content: `${item.title}: ${item.snippet}`,
     }));
+
+    // Fallback if no results
+    if (results.length === 0) {
+      results.push({
+        source: 'GoogleCSE',
+        content: `No relevant information found in the Google search for your query. Please provide more details.`,
+      });
+    }
+    return results;
   } catch (error) {
     console.error('Error querying Google Custom Search API:', error);
-    return [];
+    return [{
+      source: 'GoogleCSE',
+      content: `Error occurred while querying Google Custom Search. Please try again later.`,
+    }];
   }
 }
 
@@ -117,9 +141,13 @@ const prioritizeResponses = (responses) => {
 };
 
 async function summarizeResponses(responses, location, intent) {
+  if (responses.length === 0) {
+    return `Sorry, I couldn't find relevant information for your query. Please try again with more details.`;
+  }
+
   const API_KEY = process.env.OPENAI_API_KEY;
   const prompt = `
-You are a chatbot assistant. Summarize the following responses concisely while ensuring they are tailored to the user's query and location: 
+You are a chatbot assistant. Summarize the following responses concisely while ensuring they are tailored to the user's query and location:
 
 - Location: ${location}
 - Detected Intent: ${intent}
@@ -144,7 +172,7 @@ Provide the most helpful and actionable response.
     return summary.data.choices[0].message.content.trim();
   } catch (error) {
     console.error('Error summarizing responses:', error);
-    return responses[0];
+    return `I couldn't summarize the information for you. Please try again later.`;
   }
 }
 
@@ -154,7 +182,7 @@ const contextualizeResponse = (response, location, intent) => {
     ? 'Consider reaching out to legal aid services in your region for immediate help.'
     : 'You can also explore related resources or contact support for further assistance.';
 
-  return `${response}\n\nThis response is ${locationText}. Detected intent: ${intent}. ${suggestions}`;
+  return `${response}\n\nThis response is ${locationText}. Detected intent: ${intent || 'Unknown'}. ${suggestions}`;
 };
 
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
@@ -194,7 +222,9 @@ app.post('/sms', async (req, res) => {
     const dialogflowResponses = await dialogflowClient.detectIntent(dialogflowRequest);
     const queryResult = dialogflowResponses[0].queryResult;
     const intent = queryResult.intent?.displayName || 'Unknown';
-    const intentResponse = queryResult.fulfillmentText || "I'm here to help! Could you clarify what you're looking for?";
+
+    // Fallback logic for Dialogflow response
+    const intentResponse = queryResult.fulfillmentText || `I could not find specific information about "${intent}". Can you please clarify your query?`;
 
     const vertexResults = await queryVertexAI(userQuery, province);
     const googleResults = await queryGoogleCustomSearch(userQuery, province);
