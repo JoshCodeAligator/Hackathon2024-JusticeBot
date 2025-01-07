@@ -4,6 +4,8 @@ const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow');
 const { SearchServiceClient } = require('@google-cloud/discoveryengine');
 const firebaseAdmin = require('firebase-admin');
+require('dotenv').config(); // Load environment variables
+
 const discoveryClient = new SearchServiceClient({
   apiEndpoint: 'us-discoveryengine.googleapis.com',
 });
@@ -24,6 +26,10 @@ const preprocessQuery = (query) => query.trim().toLowerCase();
 
 async function getUserLocation(ip) {
   const API_KEY = process.env.IPINFO_API_KEY;
+  if (!API_KEY) {
+    console.error('IPINFO_API_KEY is missing.');
+    return null;
+  }
   try {
     const response = await axios.get(`https://ipinfo.io/${ip}/json?token=${API_KEY}`);
     return response.data;
@@ -60,6 +66,11 @@ async function queryVertexAI(query, location) {
 async function queryGoogleCustomSearch(query, location) {
   const API_KEY = process.env.GOOGLE_CSE_API_KEY;
   const CX = process.env.GOOGLE_CSE_ID;
+
+  if (!API_KEY || !CX) {
+    console.error('Google Custom Search credentials are missing.');
+    return [];
+  }
 
   try {
     const searchQuery = `${query} in ${location}`;
@@ -110,6 +121,13 @@ if (!projectId) {
 }
 
 const summarizeResponses = async (responses) => {
+  const API_KEY = process.env.OPENAI_API_KEY;
+
+  if (!API_KEY) {
+    console.error('OPENAI_API_KEY is missing.');
+    return responses[0];
+  }
+
   try {
     const combinedText = responses.join(' ');
     const summary = await axios.post('https://api.openai.com/v1/completions', {
@@ -117,7 +135,7 @@ const summarizeResponses = async (responses) => {
       max_tokens: 100,
       temperature: 0.7,
     }, {
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      headers: { Authorization: `Bearer ${API_KEY}` },
     });
     return summary.data.choices[0].text.trim();
   } catch (error) {
