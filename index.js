@@ -4,7 +4,30 @@ const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow');
 const { SearchServiceClient } = require('@google-cloud/discoveryengine');
 const firebaseAdmin = require('firebase-admin');
-require('dotenv').config(); // Load environment variables
+const Redis = require('ioredis');
+require('dotenv').config();
+
+// Initialize Redis
+const redis = new Redis();
+
+// Validate environment variables
+const requiredEnvVars = [
+  'TWILIO_PHONE_NUMBER',
+  'TWILIO_ACCOUNT_SID',
+  'TWILIO_AUTH_TOKEN',
+  'DIALOGFLOW_PROJECT_ID',
+  'GOOGLE_CSE_API_KEY',
+  'GOOGLE_CSE_ID',
+  'IPINFO_API_KEY',
+  'OPENAI_API_KEY',
+];
+
+requiredEnvVars.forEach((key) => {
+  if (!process.env[key]) {
+    console.error(`${key} is missing.`);
+    process.exit(1);
+  }
+});
 
 const discoveryClient = new SearchServiceClient({
   apiEndpoint: 'us-discoveryengine.googleapis.com',
@@ -22,20 +45,24 @@ app.get('/', (req, res) => {
   `);
 });
 
-const preprocessQuery = (query) => query.trim().toLowerCase();
+const preprocessQuery = (query) => {
+  const stopWords = ['the', 'is', 'at', 'which', 'on', 'in', 'and'];
+  return query
+    .trim()
+    .toLowerCase()
+    .split(' ')
+    .filter((word) => !stopWords.includes(word))
+    .join(' ');
+};
 
 async function getUserLocation(ip) {
   const API_KEY = process.env.IPINFO_API_KEY;
-  if (!API_KEY) {
-    console.error('IPINFO_API_KEY is missing.');
-    return null;
-  }
   try {
     const response = await axios.get(`https://ipinfo.io/${ip}/json?token=${API_KEY}`);
     return response.data;
   } catch (error) {
     console.error('Error fetching location:', error);
-    return null;
+    return { region: 'Unknown' };
   }
 }
 
@@ -48,15 +75,10 @@ async function queryVertexAI(query, location) {
 
   try {
     const [response] = await discoveryClient.search(request);
-    if (response.results && Array.isArray(response.results)) {
-      return response.results.map(result => ({
-        title: result.document.title,
-        snippet: result.document.snippet,
-      }));
-    } else {
-      console.error('No results found in Vertex AI Search response:', response);
-      return [];
-    }
+    return (response.results || []).map((result) => ({
+      source: 'VertexAI',
+      content: `${result.document.title}: ${result.document.snippet}`,
+    }));
   } catch (error) {
     console.error('Error querying Vertex AI Search:', error);
     return [];
@@ -67,20 +89,14 @@ async function queryGoogleCustomSearch(query, location) {
   const API_KEY = process.env.GOOGLE_CSE_API_KEY;
   const CX = process.env.GOOGLE_CSE_ID;
 
-  if (!API_KEY || !CX) {
-    console.error('Google Custom Search credentials are missing.');
-    return [];
-  }
-
   try {
     const searchQuery = `${query} in ${location}`;
     const response = await axios.get(
       `https://www.googleapis.com/customsearch/v1?q=${searchQuery}&cx=${CX}&key=${API_KEY}`
     );
-    return response.data.items.map(item => ({
-      title: item.title,
-      snippet: item.snippet,
-      link: item.link,
+    return (response.data.items || []).map((item) => ({
+      source: 'GoogleCSE',
+      content: `${item.title}: ${item.snippet}`,
     }));
   } catch (error) {
     console.error('Error querying Google Custom Search API:', error);
@@ -88,78 +104,81 @@ async function queryGoogleCustomSearch(query, location) {
   }
 }
 
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const prioritizeResponses = (responses) => {
+  const weights = {
+    Dialogflow: 3,
+    VertexAI: 2,
+    GoogleCSE: 1,
+  };
+  return responses.sort((a, b) => weights[b.source] - weights[a.source]);
+};
 
-if (!TWILIO_PHONE_NUMBER || !TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
-  console.error('Twilio credentials are missing.');
-  process.exit(1);
-}
-
-const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-
-try {
-  firebaseAdmin.initializeApp({
-    credential: firebaseAdmin.credential.applicationDefault(),
-  });
-  console.log('Firebase Admin SDK initialized.');
-} catch (error) {
-  console.error('Error initializing Firebase Admin SDK:', error);
-  process.exit(1);
-}
-
-const db = firebaseAdmin.firestore();
-const responsesCollection = db.collection('responses');
-
-const dialogflowClient = new SessionsClient();
-const projectId = process.env.DIALOGFLOW_PROJECT_ID;
-
-if (!projectId) {
-  console.error('DIALOGFLOW_PROJECT_ID is not set.');
-  process.exit(1);
-}
-
-const summarizeResponses = async (responses) => {
+async function summarizeResponses(responses, location, intent) {
   const API_KEY = process.env.OPENAI_API_KEY;
+  const prompt = `
+You are a chatbot assistant. Summarize the following responses concisely while ensuring they are tailored to the user's query and location: 
 
-  if (!API_KEY) {
-    console.error('OPENAI_API_KEY is missing.');
-    return responses[0];
-  }
+- Location: ${location}
+- Detected Intent: ${intent}
+- Responses: ${responses.join('\n')}
+
+Provide the most helpful and actionable response.
+`;
 
   try {
-    const combinedText = responses.join(' ');
-    const summary = await axios.post('https://api.openai.com/v1/completions', {
-      prompt: `Summarize this information into one concise and relevant response: ${combinedText}`,
-      max_tokens: 100,
-      temperature: 0.7,
-    }, {
-      headers: { Authorization: `Bearer ${API_KEY}` },
-    });
-    return summary.data.choices[0].text.trim();
+    const summary = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: 'gpt-4',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 150,
+        temperature: 0.5,
+      },
+      {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      }
+    );
+    return summary.data.choices[0].message.content.trim();
   } catch (error) {
     console.error('Error summarizing responses:', error);
     return responses[0];
   }
-};
+}
 
 const contextualizeResponse = (response, location, intent) => {
   const locationText = location !== 'Unknown' ? `specific to users in ${location}` : 'relevant to all users';
-  return `${response}
+  const suggestions = intent === 'Find-Lawyer'
+    ? 'Consider reaching out to legal aid services in your region for immediate help.'
+    : 'You can also explore related resources or contact support for further assistance.';
 
-This response is ${locationText}. Detected intent: ${intent}.`;
+  return `${response}\n\nThis response is ${locationText}. Detected intent: ${intent}. ${suggestions}`;
 };
+
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+firebaseAdmin.initializeApp({
+  credential: firebaseAdmin.credential.applicationDefault(),
+});
+const db = firebaseAdmin.firestore();
+const responsesCollection = db.collection('responses');
+const dialogflowClient = new SessionsClient();
 
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body;
   const userQuery = preprocessQuery(Body);
   const userIP = req.ip || '8.8.8.8';
 
+  const cacheKey = `${From}_${userQuery}`;
+  const cachedResponse = await redis.get(cacheKey);
+  if (cachedResponse) {
+    return res.status(200).send(`<Response><Message>${cachedResponse}</Message></Response>`);
+  }
+
   const userLocation = await getUserLocation(userIP);
   const province = userLocation?.region || 'Unknown';
   const sessionId = From || 'default-session-id';
-  const sessionPath = dialogflowClient.projectAgentSessionPath(projectId, sessionId);
+  const sessionPath = dialogflowClient.projectAgentSessionPath(process.env.DIALOGFLOW_PROJECT_ID, sessionId);
 
   try {
     const existingQuery = await responsesCollection
@@ -170,58 +189,50 @@ app.post('/sms', async (req, res) => {
 
     if (!existingQuery.empty) {
       const savedResponse = existingQuery.docs[0].data().response;
-      return res.status(200).send(
-        `<Response>
-          <Message>Welcome back! Here’s the info we previously shared: ${savedResponse}</Message>
-        </Response>`
-      );
-    } else {
-      const request = {
-        session: sessionPath,
-        queryInput: {
-          text: {
-            text: Body,
-            languageCode: 'en',
-          },
-        },
-      };
-
-      const responses = await dialogflowClient.detectIntent(request);
-      const queryResult = responses[0].queryResult;
-      const intent = queryResult.intent?.displayName || 'Unknown';
-      const intentResponse = queryResult.fulfillmentText || "I'm here to help! Could you clarify what you're looking for?";
-
-      const vertexResults = await queryVertexAI(userQuery, province);
-      const googleResults = await queryGoogleCustomSearch(userQuery, province);
-
-      const allResponses = [
-        intentResponse,
-        ...vertexResults.map(res => `${res.title}: ${res.snippet}`),
-        ...googleResults.map(res => `${res.title}: ${res.snippet}`),
-      ];
-
-      const summarizedResponse = await summarizeResponses(allResponses);
-      const tailoredResponse = contextualizeResponse(summarizedResponse, province, intent);
-
-      await responsesCollection.add({
-        phoneNumber: From,
-        userInput: Body,
-        intent: intent,
-        response: tailoredResponse,
-      });
-
-      return res.status(200).send(
-        `<Response>
-          <Message>${tailoredResponse}</Message>
-        </Response>`
-      );
+      await redis.set(cacheKey, savedResponse, 'EX', 3600); // Cache for 1 hour
+      return res.status(200).send(`<Response><Message>${savedResponse}</Message></Response>`);
     }
+
+    const dialogflowRequest = {
+      session: sessionPath,
+      queryInput: {
+        text: {
+          text: Body,
+          languageCode: 'en',
+        },
+      },
+    };
+
+    const dialogflowResponses = await dialogflowClient.detectIntent(dialogflowRequest);
+    const queryResult = dialogflowResponses[0].queryResult;
+    const intent = queryResult.intent?.displayName || 'Unknown';
+    const intentResponse = queryResult.fulfillmentText || "I'm here to help! Could you clarify what you're looking for?";
+
+    const vertexResults = await queryVertexAI(userQuery, province);
+    const googleResults = await queryGoogleCustomSearch(userQuery, province);
+
+    const allResponses = prioritizeResponses([
+      { source: 'Dialogflow', content: intentResponse },
+      ...vertexResults,
+      ...googleResults,
+    ].map((r) => r.content));
+
+    const summarizedResponse = await summarizeResponses(allResponses, province, intent);
+    const tailoredResponse = contextualizeResponse(summarizedResponse, province, intent);
+
+    await responsesCollection.add({
+      phoneNumber: From,
+      userInput: Body,
+      intent,
+      response: tailoredResponse,
+    });
+
+    await redis.set(cacheKey, tailoredResponse, 'EX', 3600); // Cache for 1 hour
+    return res.status(200).send(`<Response><Message>${tailoredResponse}</Message></Response>`);
   } catch (error) {
     console.error('Error processing request:', error);
     return res.status(500).send(
-      `<Response>
-        <Message>There was an error processing your request. Please try again later.</Message>
-      </Response>`
+      `<Response><Message>There was an error processing your request. Please try again later.</Message></Response>`
     );
   }
 });
