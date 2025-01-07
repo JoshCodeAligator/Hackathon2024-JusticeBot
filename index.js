@@ -22,7 +22,7 @@ const requiredEnvVars = [
   'GOOGLE_CSE_API_KEY',
   'GOOGLE_CSE_ID',
   'IPINFO_API_KEY',
-  'OPENAI_API_KEY',
+  'OPENAI_API_KEY',  // Make sure to include OpenAI API key
 ];
 
 requiredEnvVars.forEach((key) => {
@@ -42,7 +42,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
   res.send(`
-    <h1>Welcome to JustBot API!</h1>
+    <h1>Welcome to JusticeBot API!</h1>
     <p>We’re here to help you understand your rights and protections, especially under Alberta’s Human Rights framework. Just send a message, and our chatbot will provide the information you need or direct you to helpful resources. Your privacy is important to us, and we track common questions to respond faster in the future.</p>
     <p>How can I assist you today?</p>
   `);
@@ -66,37 +66,6 @@ async function getUserLocation(ip) {
   } catch (error) {
     console.error('Error fetching location:', error);
     return { region: 'Unknown' };
-  }
-}
-
-async function queryVertexAI(query, location) {
-  const searchQuery = `${query} in ${location}`;
-  const request = {
-    servingConfig: 'projects/justicebot-441223/locations/us/dataStores/static-docs-search_1735535987304/servingConfigs/default_config',
-    query: searchQuery,
-  };
-
-  try {
-    const [response] = await discoveryClient.search(request);
-    const results = (response.results || []).map((result) => ({
-      source: 'VertexAI',
-      content: `${result.document.title}: ${result.document.snippet}`,
-    }));
-
-    // Fallback if no results
-    if (results.length === 0) {
-      results.push({
-        source: 'VertexAI',
-        content: `No relevant information found in the VertexAI search for your query. Please provide more details.`,
-      });
-    }
-    return results;
-  } catch (error) {
-    console.error('Error querying Vertex AI Search:', error);
-    return [{
-      source: 'VertexAI',
-      content: `Error occurred while querying VertexAI. Please try again later.`,
-    }];
   }
 }
 
@@ -134,18 +103,18 @@ async function queryGoogleCustomSearch(query, location) {
 const prioritizeResponses = (responses) => {
   const weights = {
     Dialogflow: 3,
-    VertexAI: 2,
-    GoogleCSE: 1,
+    GoogleCSE: 2,
   };
   return responses.sort((a, b) => weights[b.source] - weights[a.source]);
 };
 
-async function summarizeResponses(responses, location, intent) {
+// **Updated to use OpenAI API for summarization and context generation**
+async function summarizeResponsesWithOpenAI(responses, location, intent) {
   if (responses.length === 0) {
     return `Sorry, I couldn't find relevant information for your query. Please try again with more details.`;
   }
 
-  const API_KEY = process.env.OPENAI_API_KEY;
+  const API_KEY = process.env.OPENAI_API_KEY;  // Use OpenAI API Key
   const prompt = `
 You are a chatbot assistant. Summarize the following responses concisely while ensuring they are tailored to the user's query and location:
 
@@ -158,20 +127,20 @@ Provide the most helpful and actionable response.
 
   try {
     const summary = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
+      'https://api.openai.com/v1/completions',  // OpenAI Completion endpoint
       {
-        model: 'gpt-3.5-turbo',
-        messages: [{ role: 'user', content: prompt }],
+        model: 'gpt-3.5-turbo',  // Example model name (could be GPT-4 or another model)
+        prompt: prompt,
         max_tokens: 150,
-        temperature: 0.5,
+        temperature: 0.7,
       },
       {
         headers: { Authorization: `Bearer ${API_KEY}` },
       }
     );
-    return summary.data.choices[0].message.content.trim();
+    return summary.data.choices[0].text.trim();
   } catch (error) {
-    console.error('Error summarizing responses:', error);
+    console.error('Error summarizing responses with OpenAI:', error);
     return `I couldn't summarize the information for you. Please try again later.`;
   }
 }
@@ -226,16 +195,15 @@ app.post('/sms', async (req, res) => {
     // Fallback logic for Dialogflow response
     const intentResponse = queryResult.fulfillmentText || `I could not find specific information about "${intent}". Can you please clarify your query?`;
 
-    const vertexResults = await queryVertexAI(userQuery, province);
+    // Fetch legal resources from Google Custom Search
     const googleResults = await queryGoogleCustomSearch(userQuery, province);
 
     const allResponses = prioritizeResponses([
       { source: 'Dialogflow', content: intentResponse },
-      ...vertexResults,
       ...googleResults,
     ].map((r) => r.content));
 
-    const summarizedResponse = await summarizeResponses(allResponses, province, intent);
+    const summarizedResponse = await summarizeResponsesWithOpenAI(allResponses, province, intent);
     const tailoredResponse = contextualizeResponse(summarizedResponse, province, intent);
 
     await cacheCollection.doc(cacheKey).set({
