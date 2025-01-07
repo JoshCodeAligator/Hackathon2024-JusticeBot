@@ -4,11 +4,14 @@ const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow');
 const { SearchServiceClient } = require('@google-cloud/discoveryengine');
 const firebaseAdmin = require('firebase-admin');
-const Redis = require('ioredis');
 require('dotenv').config();
 
-// Initialize Redis
-const redis = new Redis();
+// Initialize Firestore
+firebaseAdmin.initializeApp({
+  credential: firebaseAdmin.credential.applicationDefault(),
+});
+const db = firebaseAdmin.firestore();
+const cacheCollection = db.collection('queryCache');
 
 // Validate environment variables
 const requiredEnvVars = [
@@ -157,11 +160,6 @@ const contextualizeResponse = (response, location, intent) => {
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-firebaseAdmin.initializeApp({
-  credential: firebaseAdmin.credential.applicationDefault(),
-});
-const db = firebaseAdmin.firestore();
-const responsesCollection = db.collection('responses');
 const dialogflowClient = new SessionsClient();
 
 app.post('/sms', async (req, res) => {
@@ -170,8 +168,10 @@ app.post('/sms', async (req, res) => {
   const userIP = req.ip || '8.8.8.8';
 
   const cacheKey = `${From}_${userQuery}`;
-  const cachedResponse = await redis.get(cacheKey);
-  if (cachedResponse) {
+  const cachedDoc = await cacheCollection.doc(cacheKey).get();
+
+  if (cachedDoc.exists) {
+    const cachedResponse = cachedDoc.data().response;
     return res.status(200).send(`<Response><Message>${cachedResponse}</Message></Response>`);
   }
 
@@ -181,18 +181,6 @@ app.post('/sms', async (req, res) => {
   const sessionPath = dialogflowClient.projectAgentSessionPath(process.env.DIALOGFLOW_PROJECT_ID, sessionId);
 
   try {
-    const existingQuery = await responsesCollection
-      .where('phoneNumber', '==', From)
-      .where('userInput', '==', Body)
-      .limit(1)
-      .get();
-
-    if (!existingQuery.empty) {
-      const savedResponse = existingQuery.docs[0].data().response;
-      await redis.set(cacheKey, savedResponse, 'EX', 3600); // Cache for 1 hour
-      return res.status(200).send(`<Response><Message>${savedResponse}</Message></Response>`);
-    }
-
     const dialogflowRequest = {
       session: sessionPath,
       queryInput: {
@@ -220,14 +208,11 @@ app.post('/sms', async (req, res) => {
     const summarizedResponse = await summarizeResponses(allResponses, province, intent);
     const tailoredResponse = contextualizeResponse(summarizedResponse, province, intent);
 
-    await responsesCollection.add({
-      phoneNumber: From,
-      userInput: Body,
-      intent,
+    await cacheCollection.doc(cacheKey).set({
       response: tailoredResponse,
+      timestamp: firebaseAdmin.firestore.FieldValue.serverTimestamp(),
     });
 
-    await redis.set(cacheKey, tailoredResponse, 'EX', 3600); // Cache for 1 hour
     return res.status(200).send(`<Response><Message>${tailoredResponse}</Message></Response>`);
   } catch (error) {
     console.error('Error processing request:', error);
