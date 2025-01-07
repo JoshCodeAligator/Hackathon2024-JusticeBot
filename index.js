@@ -129,7 +129,7 @@ Provide the most helpful and actionable response.
     const summary = await axios.post(
       'https://api.openai.com/v1/completions',  // OpenAI Completion endpoint
       {
-        model: 'gpt-3.5-turbo',  // Example model name (could be GPT-4 or another model)
+        model: 'gpt-3.5-turbo',  // Make sure to use gpt-3.5-turbo (no gpt-4 here)
         prompt: prompt,
         max_tokens: 150,
         temperature: 0.7,
