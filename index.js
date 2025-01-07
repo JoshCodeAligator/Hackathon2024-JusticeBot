@@ -126,10 +126,15 @@ async function summarizeResponsesWithOpenAI(responses, location, intent) {
     return response.length > maxLength ? response.slice(0, maxLength) + '...' : response;
   });
 
+  const cleanResponses = trimmedResponses.map(response =>
+    response.replace(/\\["'\\]/g, '') // This removes escape sequences like \" and \'
+  );
+
+
   const prompt = `
 You are a chatbot assistant. Summarize the following responses concisely for a user located in ${location}:
 
-- Responses: ${trimmedResponses.join('\n')}
+- Responses: ${cleanResponses.join('\n')}
 
 Provide a concise, helpful, and actionable response.
 `;
