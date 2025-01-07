@@ -160,7 +160,7 @@ Provide the most helpful and actionable response.
     const summary = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
-        model: 'gpt-4',
+        model: 'gpt-3.5-turbo',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 150,
         temperature: 0.5,
