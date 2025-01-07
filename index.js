@@ -146,7 +146,7 @@ Provide a concise, helpful, and actionable response.
         model: 'gpt-3.5-turbo',  // Make sure to use gpt-3.5-turbo (no gpt-4 here)
         prompt: prompt,
         max_tokens: 150,
-        temperature: 0.7,
+        temperature: 0.3,  // Lower temperature for more factual and concise answers
       },
       {
         headers: { Authorization: `Bearer ${API_KEY}` },
