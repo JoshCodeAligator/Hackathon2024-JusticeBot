@@ -80,7 +80,7 @@ async function queryGoogleCustomSearch(query, location) {
     );
     const results = (response.data.items || []).map((item) => ({
       source: 'GoogleCSE',
-      content: `${item.title}: ${item.snippet}`,
+      content: `${item.title}: ${item.snippet.slice(0, 300)}...`, // Limit snippet length
     }));
 
     // Fallback if no results
@@ -115,14 +115,23 @@ async function summarizeResponsesWithOpenAI(responses, location, intent) {
   }
 
   const API_KEY = process.env.OPENAI_API_KEY;  // Use OpenAI API Key
+
+  // Limit the number of responses
+  const maxResponseCount = 5;
+  const limitedResponses = responses.slice(0, maxResponseCount);
+
+  // Truncate responses if they are too long
+  const trimmedResponses = limitedResponses.map((response) => {
+    const maxLength = 500;  // Limit each response to 500 characters
+    return response.length > maxLength ? response.slice(0, maxLength) + '...' : response;
+  });
+
   const prompt = `
-You are a chatbot assistant. Summarize the following responses concisely while ensuring they are tailored to the user's query and location:
+You are a chatbot assistant. Summarize the following responses concisely for a user located in ${location}:
 
-- Location: ${location}
-- Detected Intent: ${intent}
-- Responses: ${responses.join('\n')}
+- Responses: ${trimmedResponses.join('\n')}
 
-Provide the most helpful and actionable response.
+Provide a concise, helpful, and actionable response.
 `;
 
   try {
