@@ -1,10 +1,9 @@
 const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
-const nltk = require('nltk');
-
 const { SessionsClient } = require('@google-cloud/dialogflow');
 const { Translate } = require('@google-cloud/translate').v2;
+const { sent_tokenize } = require('nltk.tokenize');
 const firebaseAdmin = require('firebase-admin');
 require('dotenv').config();
 
@@ -111,7 +110,7 @@ const prioritizeResponses = (responses) => {
   return responses.sort((a, b) => weights[b.source] - weights[a.source]);
 };
 
-async function summarizeResponsesWithNLTK(responses, location, intent) {
+async function summarizeResponsesWithNLTK(responses) {
   if (responses.length === 0) {
     return `Sorry, I couldn't find relevant information for your query. Please try again with more details.`;
   }
@@ -123,12 +122,13 @@ async function summarizeResponsesWithNLTK(responses, location, intent) {
   const combinedResponses = limitedResponses.join(' ');
 
   // Tokenize and summarize using NLTK
-  const sentences = nltk.sent_tokenize(combinedResponses);
+  const sentences = sent_tokenize(combinedResponses);
   const numSentences = Math.max(1, Math.floor(sentences.length * 0.3)); // 30% of sentences
   const summary = sentences.slice(0, numSentences).join(' ');
 
   return summary;
 }
+
 async function translateResponse(response, targetLanguage) {
   try {
     const [translation] = await translateClient.translate(response, targetLanguage);
