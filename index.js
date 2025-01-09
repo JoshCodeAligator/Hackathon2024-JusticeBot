@@ -2,7 +2,7 @@ const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow');
-const { Translate } = require('@google-cloud/translate');
+const { Translate } = require('@google-cloud/translate').v2;
 const firebaseAdmin = require('firebase-admin');
 require('dotenv').config();
 
@@ -40,6 +40,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Home route
 app.get('/', (req, res) => {
   res.send(`
     <h1>Welcome to JusticeBot API!</h1>
@@ -108,7 +109,6 @@ const prioritizeResponses = (responses) => {
   return responses.sort((a, b) => weights[b.source] - weights[a.source]);
 };
 
-// **Updated to use OpenAI API for summarization and context generation**
 async function summarizeResponsesWithOpenAI(responses, location, intent) {
   if (responses.length === 0) {
     return `Sorry, I couldn't find relevant information for your query. Please try again with more details.`;
@@ -142,7 +142,7 @@ Provide a concise, helpful, and actionable response.
     const summary = await axios.post(
       'https://api.openai.com/v1/completions',  // OpenAI Completion endpoint
       {
-        model: 'gpt-3.5-turbo',  // Make sure to use gpt-3.5-turbo (no gpt-4 here)
+        model: 'gpt-3.5-turbo',  // Ensure using gpt-3.5-turbo
         prompt: prompt,
         max_tokens: 150,
         temperature: 0.3,  // Lower temperature for more factual and concise answers
