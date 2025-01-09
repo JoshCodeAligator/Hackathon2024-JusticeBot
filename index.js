@@ -2,7 +2,7 @@ const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow');
-const { SearchServiceClient } = require('@google-cloud/discoveryengine');
+const { Translate } = require('@google-cloud/translate');
 const firebaseAdmin = require('firebase-admin');
 require('dotenv').config();
 
@@ -22,7 +22,8 @@ const requiredEnvVars = [
   'GOOGLE_CSE_API_KEY',
   'GOOGLE_CSE_ID',
   'IPINFO_API_KEY',
-  'OPENAI_API_KEY',  // Make sure to include OpenAI API key
+  'OPENAI_API_KEY',
+  'GOOGLE_TRANSLATE_API_KEY'
 ];
 
 requiredEnvVars.forEach((key) => {
@@ -32,9 +33,8 @@ requiredEnvVars.forEach((key) => {
   }
 });
 
-const discoveryClient = new SearchServiceClient({
-  apiEndpoint: 'us-discoveryengine.googleapis.com',
-});
+const dialogflowClient = new SessionsClient();
+const translateClient = new Translate({ key: process.env.GOOGLE_TRANSLATE_API_KEY });
 
 const app = express();
 app.use(express.json());
@@ -130,7 +130,6 @@ async function summarizeResponsesWithOpenAI(responses, location, intent) {
     response.replace(/\\["'\\]/g, '') // This removes escape sequences like \" and \'
   );
 
-
   const prompt = `
 You are a chatbot assistant. Summarize the following responses concisely for a user located in ${location}:
 
@@ -159,19 +158,63 @@ Provide a concise, helpful, and actionable response.
   }
 }
 
-const contextualizeResponse = (response, location, intent) => {
+async function translateResponse(response, targetLanguage) {
+  try {
+    const [translation] = await translateClient.translate(response, targetLanguage);
+    return translation;
+  } catch (error) {
+    console.error('Error translating response:', error);
+    return response;
+  }
+}
+
+const detectLanguage = (input) => {
+  const languageMap = {
+    'spanish': 'es',
+    'french': 'fr',
+    'punjabi': 'pa',
+    'german': 'de',
+    'italian': 'it',
+    'chinese': 'zh',
+    'portuguese': 'pt',
+    'arabic': 'ar',
+    'japanese': 'ja',
+    'korean': 'ko',
+    'hindi': 'hi',
+    'russian': 'ru',
+    'dutch': 'nl',
+    'turkish': 'tr',
+    'swahili': 'sw',
+    'vietnamese': 'vi',
+    'indonesian': 'id',
+    'thai': 'th',
+    'malay': 'ms',
+    // Add more as needed
+  };
+
+  const lowerCaseInput = input.toLowerCase();
+  for (const [langName, langCode] of Object.entries(languageMap)) {
+    if (lowerCaseInput.includes(langName)) {
+      return langCode;
+    }
+  }
+  return 'en';  // Default to English if no match
+};
+
+const contextualizeResponse = async (response, location, intent) => {
   const locationText = location !== 'Unknown' ? `specific to users in ${location}` : 'relevant to all users';
   const suggestions = intent === 'Find-Lawyer'
     ? 'Consider reaching out to legal aid services in your region for immediate help.'
     : 'You can also explore related resources or contact support for further assistance.';
 
-  return `${response}\n\nThis response is ${locationText}. Detected intent: ${intent || 'Unknown'}. ${suggestions}`;
+  const detectedLanguageCode = detectLanguage(response);  // Use detected language
+  const translatedResponse = await translateResponse(response, detectedLanguageCode);
+
+  return `${translatedResponse}\n\nThis response is ${locationText}. Detected intent: ${intent || 'Unknown'}. ${suggestions}`;
 };
 
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-
-const dialogflowClient = new SessionsClient();
 
 app.post('/sms', async (req, res) => {
   const { Body, From } = req.body;
@@ -218,7 +261,7 @@ app.post('/sms', async (req, res) => {
     ].map((r) => r.content));
 
     const summarizedResponse = await summarizeResponsesWithOpenAI(allResponses, province, intent);
-    const tailoredResponse = contextualizeResponse(summarizedResponse, province, intent);
+    const tailoredResponse = await contextualizeResponse(summarizedResponse, province, intent);
 
     await cacheCollection.doc(cacheKey).set({
       response: tailoredResponse,
