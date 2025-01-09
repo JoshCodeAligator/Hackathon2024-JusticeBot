@@ -4,6 +4,7 @@ const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow');
 const { Translate } = require('@google-cloud/translate').v2;
 const nltk = require('nltk');
+nltk.download('punkt');  
 const firebaseAdmin = require('firebase-admin');
 require('dotenv').config();
 
