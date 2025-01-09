@@ -1,6 +1,8 @@
 const axios = require('axios');
 const express = require('express');
 const twilio = require('twilio');
+const nltk = require('nltk');
+
 const { SessionsClient } = require('@google-cloud/dialogflow');
 const { Translate } = require('@google-cloud/translate').v2;
 const firebaseAdmin = require('firebase-admin');
@@ -109,55 +111,24 @@ const prioritizeResponses = (responses) => {
   return responses.sort((a, b) => weights[b.source] - weights[a.source]);
 };
 
-async function summarizeResponsesWithOpenAI(responses, location, intent) {
+async function summarizeResponsesWithNLTK(responses, location, intent) {
   if (responses.length === 0) {
     return `Sorry, I couldn't find relevant information for your query. Please try again with more details.`;
   }
 
-  const API_KEY = process.env.OPENAI_API_KEY;  // Use OpenAI API Key
-
-  // Limit the number of responses
   const maxResponseCount = 5;
   const limitedResponses = responses.slice(0, maxResponseCount);
 
-  // Truncate responses if they are too long
-  const trimmedResponses = limitedResponses.map((response) => {
-    const maxLength = 500;  // Limit each response to 500 characters
-    return response.length > maxLength ? response.slice(0, maxLength) + '...' : response;
-  });
+  // Combine responses into a single text
+  const combinedResponses = limitedResponses.join(' ');
 
-  const cleanResponses = trimmedResponses.map(response =>
-    response.replace(/\\["'\\]/g, '') // This removes escape sequences like \" and \'
-  );
+  // Tokenize and summarize using NLTK
+  const sentences = nltk.sent_tokenize(combinedResponses);
+  const numSentences = Math.max(1, Math.floor(sentences.length * 0.3)); // 30% of sentences
+  const summary = sentences.slice(0, numSentences).join(' ');
 
-  const prompt = `
-You are a chatbot assistant. Summarize the following responses concisely for a user located in ${location}:
-
-- Responses: ${cleanResponses.join('\n')}
-
-Provide a concise, helpful, and actionable response.
-`;
-
-  try {
-    const summary = await axios.post(
-      'https://api.openai.com/v1/completions',  // OpenAI Completion endpoint
-      {
-        model: 'gpt-3.5-turbo',  // Ensure using gpt-3.5-turbo
-        prompt: prompt,
-        max_tokens: 150,
-        temperature: 0.3,  // Lower temperature for more factual and concise answers
-      },
-      {
-        headers: { Authorization: `Bearer ${API_KEY}` },
-      }
-    );
-    return summary.data.choices[0].text.trim();
-  } catch (error) {
-    console.error('Error summarizing responses with OpenAI:', error);
-    return `I couldn't summarize the information for you. Please try again later.`;
-  }
+  return summary;
 }
-
 async function translateResponse(response, targetLanguage) {
   try {
     const [translation] = await translateClient.translate(response, targetLanguage);
@@ -260,7 +231,7 @@ app.post('/sms', async (req, res) => {
       ...googleResults,
     ].map((r) => r.content));
 
-    const summarizedResponse = await summarizeResponsesWithOpenAI(allResponses, province, intent);
+    const summarizedResponse = await summarizeResponsesWithNLTK(allResponses, province, intent);
     const tailoredResponse = await contextualizeResponse(summarizedResponse, province, intent);
 
     await cacheCollection.doc(cacheKey).set({
