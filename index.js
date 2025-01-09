@@ -3,7 +3,7 @@ const express = require('express');
 const twilio = require('twilio');
 const { SessionsClient } = require('@google-cloud/dialogflow');
 const { Translate } = require('@google-cloud/translate').v2;
-const { tokenize } = require('nltk');
+const nltk = require('nltk');
 const firebaseAdmin = require('firebase-admin');
 require('dotenv').config();
 
@@ -122,7 +122,7 @@ async function summarizeResponsesWithNLTK(responses) {
   const combinedResponses = limitedResponses.join(' ');
 
   // Tokenize and summarize using NLTK
-  const sentences = tokenize.whitespace(combinedResponses); // or tokenize.commas, etc.
+  const sentences = nltk.tokenize.whitespace(combinedResponses);  // Or other tokenization methods as needed
   const numSentences = Math.max(1, Math.floor(sentences.length * 0.3)); // 30% of sentences
   const summary = sentences.slice(0, numSentences).join(' ');
 
